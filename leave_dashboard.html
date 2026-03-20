@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Leave Dashboard</title>
+  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; background: #0f0f0f; color: #fff; }
+    h1 { text-align: center; }
+    #uploader { margin: 20px 0; }
+    .chart { margin-top: 30px; }
+    .row { display: flex; gap: 20px; flex-wrap: wrap; }
+    .col { flex: 1 1 48%; min-width: 300px; }
+    .controls { display:flex; gap:10px; align-items:center; margin-bottom:10px; }
+    input[type=file] { background:#222; color:#fff; padding:8px; border-radius:6px; border:1px solid #333; }
+    button { padding:8px 12px; border-radius:6px; border:none; cursor:pointer; }
+    .small { font-size:13px; color:#ccc; }
+    #message { margin-top:10px; color:#ddd; }
+  </style>
+</head>
+<body>
+  <h1>Interactive Leave Dashboard</h1>
+
+  <div class="controls">
+    <input type="file" id="uploader" accept=".json" />
+    <button id="downloadSample">Download sample JSON</button>
+    <div class="small">Upload your JSON file and the dashboard will render below.</div>
+  </div>
+  <div id="message"></div>
+
+  <div id="charts">
+    <div class="row">
+      <div id="chart1" class="chart col" style="height:400px;"></div>
+      <div id="chart2" class="chart col" style="height:400px;"></div>
+    </div>
+    <div class="row">
+      <div id="chart3" class="chart col" style="height:400px;"></div>
+      <div id="chart4" class="chart col" style="height:400px;"></div>
+    </div>
+    <div class="row">
+      <div id="chart5" class="chart col" style="height:400px;"></div>
+    </div>
+  </div>
+
+  <script>
+    // Utility: safe parse date to YYYY-MM-DD
+    function parseDate(value) {
+      if (!value) return null;
+      // Try common formats: DD/MM/YYYY, DD-MM-YYYY, YYYY/MM/DD, YYYY-MM-DD, Month names
+      const v = String(value).trim();
+      // If already ISO-ish
+      const isoMatch = v.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
+      if (isoMatch) {
+        const y = isoMatch[1], m = isoMatch[2].padStart(2,'0'), d = isoMatch[3].padStart(2,'0');
+        return `${y}-${m}-${d}`;
+      }
+      const dmMatch = v.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})/);
+      if (dmMatch) {
+        const d = dmMatch[1].padStart(2,'0'), m = dmMatch[2].padStart(2,'0'), y = dmMatch[3];
+        return `${y}-${m}-${d}`;
+      }
+      // Try Date parse fallback
+      const dt = new Date(v);
+      if (!isNaN(dt)) {
+        const y = dt.getFullYear();
+        const m = String(dt.getMonth()+1).padStart(2,'0');
+        const d = String(dt.getDate()).padStart(2,'0');
+        return `${y}-${m}-${d}`;
+      }
+      return null;
+    }
+
+    document.getElementById("uploader").addEventListener("change", function (event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+
+      reader.onload = function (e) {
+        try {
+          const data = JSON.parse(e.target.result);
+          generateDashboard(data);
+          document.getElementById('message').textContent = "Dashboard generated from uploaded file.";
+        } catch (err) {
+          document.getElementById('message').textContent = "Invalid JSON file — check format.";
+        }
+      };
+
+      reader.readAsText(file);
+    });
+
+    // Sample JSON generator for download (basic structure)
+    document.getElementById('downloadSample').addEventListener('click', function() {
+      const sample = [
+        {"Date":"01/06/2025","Day":"Sunday","Team members name on leave":"","Comp off":"","Half day":"","Early logout":"","Comments":""},
+        {"Date":"02/06/2025","Day":"Monday","Team members name on leave":"Mayank ,Abbas,Venkata Karthik,suhas(SL),Nelmi, Durga","Comp off":"","Half day":"Aravind","Early logout":"","Comments":""},
+        {"Date":"03/06/2025","Day":"Tuesday","Team members name on leave":"Mayank .Abbas, Aastha","Comp off":"","Half day":"","Early logout":"","Comments":""}
+      ];
+      const blob = new Blob([JSON.stringify(sample, null, 2)], {type: 'application/json'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'leave_sample.json'; document.body.appendChild(a); a.click();
+      a.remove(); URL.revokeObjectURL(url);
+    });
+
+    function generateDashboard(raw) {
+      // raw is expected to be an array of rows like your provided JSON
+      const rows = Array.isArray(raw) ? raw : (raw.data || []);
+      if (!rows.length) {
+        document.getElementById('message').textContent = "No records found in uploaded JSON.";
+        return;
+      }
+
+      // Normalize: extract names, split commas, handle SL/PL markers
+      const events = [];
+      rows.forEach(r => {
+        const dateStr = r.Date || r['Date '] || '';
+        const parsed = parseDate(dateStr) || '';
+        const peopleField = r['Team members name on leave'] || r['Team members name on leave '] || '';
+        const compOff = r.Comp off || r['Comp off'] || '';
+        const half = r['Half day'] || r['Half day '] || '';
+        const early = r['Early logout'] || r['Early logout '] || '';
+        const comments = r.Comments || '';
+
+        // split people by comma if present
+        const people = peopleField ? peopleField.split(',').map(s => s.trim()).filter(Boolean) : [];
+        people.forEach(p => {
+          events.push({date: parsed, person: p, type: 'Leave', raw: r});
+        });
+        if (compOff) {
+          (compOff.split(',').map(s=>s.trim()).filter(Boolean)).forEach(p => events.push({date: parsed, person: p, type: 'CompOff', raw: r}));
+        }
+        if (half) {
+          (half.split(',').map(s=>s.trim()).filter(Boolean)).forEach(p => events.push({date: parsed, person: p, type: 'HalfDay', raw: r}));
+        }
+        if (early) {
+          (early.split(',').map(s=>s.trim()).filter(Boolean)).forEach(p => events.push({date: parsed, person: p, type: 'EarlyLogout', raw: r}));
+        }
+      });
+
+      // Clean person names: remove PL/SL markers in parentheses or after space
+      events.forEach(e => {
+        e.person = e.person.replace(/\(.*?\)/g, '').replace(/\bPL\b|\bSL\b/ig, '').trim();
+      });
+
+      // Aggregations
+      const byPerson = {};
+      const byType = {};
+      const byMonth = {};
+      const personsSet = new Set();
+      events.forEach(e => {
+        const name = e.person || 'Unknown';
+        personsSet.add(name);
+        byPerson[name] = byPerson[name] || {Leave:0, CompOff:0, HalfDay:0, EarlyLogout:0, total:0};
+        byPerson[name][e.type] = (byPerson[name][e.type] || 0) + 1;
+        byPerson[name].total++;
+
+        byType[e.type] = (byType[e.type] || 0) + 1;
+
+        const month = e.date ? e.date.substring(0,7) : 'Unknown';
+        byMonth[month] = (byMonth[month] || 0) + 1;
+      });
+
+      const persons = Array.from(personsSet).sort((a,b)=> byPerson[b].total - byPerson[a].total);
+
+      // Chart 1: Leaves per employee (bar)
+      const trace1 = {
+        x: persons,
+        y: persons.map(p => byPerson[p].total),
+        type: 'bar',
+        text: persons.map(p => `Leave:${byPerson[p].Leave} CompOff:${byPerson[p].CompOff} HalfDay:${byPerson[p].HalfDay} EarlyLogout:${byPerson[p].EarlyLogout}`),
+        hoverinfo: 'text+y'
+      };
+      Plotly.newPlot('chart1', [trace1], {title: 'Total Leave Events per Employee', margin:{t:40}});
+
+      // Chart 2: Leave type distribution (pie)
+      const trace2 = {
+        labels: Object.keys(byType),
+        values: Object.values(byType),
+        type: 'pie',
+        textinfo: 'label+percent'
+      };
+      Plotly.newPlot('chart2', [trace2], {title: 'Leave Type Distribution', margin:{t:40}});
+
+      // Chart 3: Monthly trend (time series)
+      const months = Object.keys(byMonth).sort();
+      const trace3 = {
+        x: months,
+        y: months.map(m => byMonth[m]),
+        type: 'scatter',
+        mode: 'lines+markers',
+      };
+      Plotly.newPlot('chart3', [trace3], {title: 'Monthly Leave Trend', margin:{t:40}});
+
+      // Chart 4: Heatmap employee vs leave type
+      const types = ['Leave','CompOff','HalfDay','EarlyLogout'];
+      const z = persons.map(p => types.map(t => byPerson[p][t] || 0));
+      const trace4 = {
+        z: z,
+        x: types,
+        y: persons,
+        type: 'heatmap',
+        colorscale: 'YlOrRd'
+      };
+      Plotly.newPlot('chart4', [trace4], {title: 'Employee vs Leave Type Heatmap', margin:{t:40}});
+
+      // Chart 5: Top 10 people by leaves (horizontal bar)
+      const topN = persons.slice(0,10);
+      const trace5 = {
+        x: topN.map(p => byPerson[p].total).reverse(),
+        y: topN.map(p => p).reverse(),
+        type: 'bar',
+        orientation: 'h'
+      };
+      Plotly.newPlot('chart5', [trace5], {title: 'Top 10 Leave Takers', margin:{t:40}});
+
+    }
+  </script>
+</body>
+</html>
